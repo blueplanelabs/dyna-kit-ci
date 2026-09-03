@@ -1,0 +1,309 @@
+name: Kit CI
+
+# Reusable workflow for DynaSpace kit repositories.
+#
+# A kit repo calls it from its own .github/workflows/ci.yml — identical in every
+# kit, nothing to fill in (unless the kit needs OpenCV or Mongo, see the
+# needs-opencv / needs-mongo inputs):
+#
+#   name: CI
+#   on:
+#     push:
+#       branches: [main]
+#     pull_request:
+#       branches: [main]
+#     workflow_dispatch:
+#   jobs:
+#     ci:
+#       permissions:
+#         contents: write        # create releases (needed if the org defaults GITHUB_TOKEN to read-only)
+#       uses: blueplanelabs/dyna-kit-ci/.github/workflows/kit-ci.yml@v1
+#       secrets: inherit
+#
+# What it does: build ON TOP of a published dynaspace-os release image (which
+# already carries dynaspace-os + LepiterLiterate + the GT patches), load only
+# the kit's own package, tangle its Lepiter pages, run its <gtExample>s, build a
+# .dynkit and publish it as a GitHub release.
+#
+# The kit repo must provide:
+#   - .smalltalk.ston  with #baseline, #testing, and
+#     #preTesting  : 'scripts/tangle-lepiter.st'
+#     #postTesting : 'scripts/export-dynkit.st'
+#     #loading with #registerInIceberg: true, loading ONLY the kit package
+#   - VERSION                        (e.g. 0.1.0)
+#   - BaselineOf<X> class >> kit         returning a fully built DynOSKit
+#   - BaselineOf<X> class >> loadLepiter registering <repo>/lepiter
+#
+# scripts/tangle-lepiter.st and scripts/export-dynkit.st are supplied by THIS
+# repo and copied into the kit workspace before smalltalkci runs.
+#
+# Secrets (via `secrets: inherit`):
+#   - GITHUB_TOKEN     automatic; release creation
+#   - DYNA_DEPS_TOKEN  read access to blueplanelabs/dynaspace-os (Contents: Read)
+#                      to download its release image
+
+on:
+  workflow_call:
+    inputs:
+      smalltalk-image:
+        description: SmalltalkCI image alias (only used to name the job / satisfy the -s flag).
+        required: false
+        type: string
+        default: GToolkit64-release
+      dynaspace-os-release:
+        description: dynaspace-os release tag to build on, or "latest".
+        required: false
+        type: string
+        default: latest
+      gt-vm-version:
+        description: GToolkit VM version to run the image with. Must match the VM that saved the dynaspace-os release image.
+        required: false
+        type: string
+        default: v1.1.554
+      needs-opencv:
+        description: Install OpenCV native libs for kits whose examples use ArUco / blob camera detection.
+        required: false
+        type: boolean
+        default: false
+      needs-mongo:
+        description: Start MongoDB (docker compose from the dynaspace-os image) for kits whose examples use Voyage/Mongo stores.
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: ${{ inputs.smalltalk-image }}
+
+    steps:
+      - name: Checkout kit repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout dyna-kit-ci (matching workflow version)
+        uses: actions/checkout@v4
+        with:
+          repository: blueplanelabs/dyna-kit-ci
+          ref: ${{ github.job_workflow_sha }}
+          path: .dyna-kit-ci
+
+      - name: Stage shared SmalltalkCI scripts
+        run: |
+          mkdir -p scripts
+          cp .dyna-kit-ci/scripts/*.st scripts/
+          ls -l scripts/
+
+      - name: Setup SmalltalkCI
+        uses: hpi-swa/setup-smalltalkCI@v1
+        with:
+          smalltalk-image: ${{ inputs.smalltalk-image }}
+
+      # Fixes 1/2/3 in gtoolkit/run.sh so GToolkit --headful works headless in CI.
+      # (The VM-version pin is NOT applied here in Option B: prepare_gt/prepare_vm
+      # are skipped when --image/--vm are user-provided, so we pin by choosing
+      # which VM zip we download below.)
+      - name: Patch SmalltalkCI gtoolkit/run.sh
+        run: python3 .dyna-kit-ci/scripts/patch-smalltalkci.py "$SMALLTALK_CI_HOME/gtoolkit/run.sh"
+
+      - name: Resolve dynaspace-os release
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.DYNA_DEPS_TOKEN }}
+        run: |
+          if [ "${{ inputs.dynaspace-os-release }}" = "latest" ]; then
+            # Resolve the newest non-draft release explicitly (prereleases kept:
+            # dynaspace-os only publishes build-N prereleases, which `gh release
+            # download` with no tag would skip). --json output is stable; the
+            # human table is not.
+            TAG=$(gh release list -R blueplanelabs/dynaspace-os --limit 20 --json tagName,isDraft \
+                  --jq 'map(select(.isDraft | not)) | .[0].tagName')
+          else
+            TAG="${{ inputs.dynaspace-os-release }}"
+          fi
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "::error::Could not resolve a dynaspace-os release tag"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Using dynaspace-os release: $TAG"
+
+      # Not cached: the default `latest` resolves to a new tag on almost every
+      # run (dynaspace-os publishes a build per push), so an image cache would be
+      # a near-permanent miss plus ~2 min of post-job save overhead. Downloading
+      # the release zip fresh is ~1 min. The VM below IS cached (stable key).
+      - name: Download dynaspace-os image
+        env:
+          GH_TOKEN: ${{ secrets.DYNA_DEPS_TOKEN }}
+        run: |
+          DSOS="${{ runner.temp }}/dynaspace-os"
+          mkdir -p "$DSOS"
+          gh release download -R blueplanelabs/dynaspace-os "${{ steps.resolve.outputs.tag }}" \
+            --pattern '*.zip' --dir "$DSOS"
+          unzip -q "$DSOS"/*.zip -d "$DSOS"
+          rm -f "$DSOS"/*.zip
+          test -f "$DSOS/GlamorousToolkit.image" || { echo "::error::no GlamorousToolkit.image in the dynaspace-os release zip"; exit 1; }
+          test -f "$DSOS/GlamorousToolkit.changes" || { echo "::error::no GlamorousToolkit.changes alongside the image"; exit 1; }
+          ls -la "$DSOS"
+
+      # Cached: the key is the pinned VM version, which changes rarely and only on
+      # purpose, so after the first run this is a hit and skips the ~200 MB download.
+      - name: Cache GToolkit VM
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/gt-vm
+          key: gt-vm-${{ inputs.gt-vm-version }}
+
+      - name: Download GToolkit VM
+        run: |
+          GTVM="${{ runner.temp }}/gt-vm"
+          CLI="$GTVM/bin/GlamorousToolkit-cli"
+          if [ -x "$CLI" ]; then
+            echo "GToolkit VM present from cache."
+          else
+            mkdir -p "$GTVM"
+            V="${{ inputs.gt-vm-version }}"
+            URL="https://github.com/feenkcom/gtoolkit/releases/download/${V}/GlamorousToolkit-Linux-x86_64-${V}.zip"
+            curl -sfL "$URL" -o "$GTVM/vm.zip"
+            unzip -q "$GTVM/vm.zip" -d "$GTVM"
+            rm -f "$GTVM/vm.zip"
+          fi
+          test -f "$CLI" || { echo "::error::GlamorousToolkit-cli not found after VM download"; exit 1; }
+          chmod +x "$CLI"
+          "$CLI" --version || true
+
+      # OpenCV runtime, only for kits whose examples call the camera-detection FFI
+      # (LibOpenCV / DynIOArucoInputDetector / DynIOBlobInputDetector). The
+      # libWrapperOpenCVDetector / libOpenCVDetector .so wrappers already ride in
+      # the dynaspace-os release zip and are found via FileLocator image parent;
+      # only OpenCV itself + a viz stub are added here. conda is preinstalled on
+      # ubuntu-latest. No BLOB_DETECTOR_TOKEN needed.
+      - name: Setup OpenCV native dependencies
+        if: ${{ inputs.needs-opencv }}
+        run: |
+          conda install -c conda-forge opencv=4.13.0 -y --quiet
+          CONDA_LIB="$(conda info --base)/lib"
+          printf 'void __opencv_viz_stub(void) {}' > /tmp/stub_viz.c
+          gcc -shared -fPIC -Wl,-soname,libopencv_viz.so.413 /tmp/stub_viz.c -o /tmp/libopencv_viz.so.413
+          sudo mv /tmp/libopencv_viz.so.413 /usr/local/lib/
+          sudo ldconfig
+          echo "LD_LIBRARY_PATH=/usr/local/lib:${CONDA_LIB}" >> "$GITHUB_ENV"
+
+      # MongoDB for kits whose examples use Voyage/Mongo stores. The compose file
+      # is tangle-generated and rides in the dynaspace-os release zip; DynOSConfig
+      # in that image resolves DYNASPACE_ENV (unset here -> "dev"), which matches
+      # the credentials this compose file spins up, so nothing extra to set.
+      - name: Start MongoDB
+        if: ${{ inputs.needs-mongo }}
+        run: |
+          COMPOSE="${{ runner.temp }}/dynaspace-os/docker/docker-compose.yml"
+          test -f "$COMPOSE" || { echo "::error::$COMPOSE not found in the dynaspace-os release zip"; exit 1; }
+          docker compose -f "$COMPOSE" up -d --wait
+
+      - name: Install Xvfb
+        run: sudo apt-get install -y xvfb
+
+      # The dynaspace-os image is saved by saveAndQuitImage during that project's
+      # build and can occasionally produce a snapshot that never reopens without
+      # raising a Smalltalk-level error. Boot it here under the same
+      # --interactive/Xvfb conditions and fail hard if a trivial eval does not
+      # complete, before we hand it to smalltalkci.
+      - name: Verify dynaspace-os image boots
+        timeout-minutes: 10
+        run: |
+          DSOS="${{ runner.temp }}/dynaspace-os"
+          CLI="${{ runner.temp }}/gt-vm/bin/GlamorousToolkit-cli"
+          MARKER="DSOS_IMAGE_BOOT_OK_$$"
+          LOG="${{ runner.temp }}/boot.log"
+          set +e
+          xvfb-run -a stdbuf -oL -eL timeout 120 "$CLI" --interactive "$DSOS/GlamorousToolkit.image" eval "'${MARKER}'" > "$LOG" 2>&1 &
+          VM_PID=$!
+          for i in $(seq 1 60); do
+            kill -0 "$VM_PID" 2>/dev/null || break
+            grep -aq "$MARKER" "$LOG" 2>/dev/null && break
+            sleep 2
+          done
+          kill "$VM_PID" 2>/dev/null
+          wait "$VM_PID" 2>/dev/null
+          set -e
+          cat "$LOG"
+          grep -aq "$MARKER" "$LOG" || { echo "::error::dynaspace-os image failed to boot/evaluate"; exit 1; }
+          echo "Image boot verification passed."
+
+      # --headful triggers the patched gtoolkit/run.sh to pass --interactive to
+      # GlamorousToolkit-cli. --image/--vm make smalltalkci skip prepare_gt and
+      # use the dynaspace-os image + pinned VM directly. #loading then loads only
+      # the kit package; #preTesting tangles Lepiter; #postTesting builds and
+      # round-trips the .dynkit. No continue-on-error: a failing example or a
+      # failing export fails the job and blocks the release.
+      # LD_LIBRARY_PATH is inherited from $GITHUB_ENV only if the OpenCV step ran.
+      - name: Load kit and run examples
+        run: |
+          xvfb-run -a smalltalkci -v -s "${{ inputs.smalltalk-image }}" --headful \
+            --image "${{ runner.temp }}/dynaspace-os/GlamorousToolkit.image" \
+            --vm    "${{ runner.temp }}/gt-vm/bin/GlamorousToolkit-cli"
+        timeout-minutes: 25
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stop MongoDB
+        if: ${{ always() && inputs.needs-mongo }}
+        run: |
+          COMPOSE="${{ runner.temp }}/dynaspace-os/docker/docker-compose.yml"
+          [ -f "$COMPOSE" ] && docker compose -f "$COMPOSE" down -v || true
+
+      - name: Locate generated .dynkit
+        id: dynkit
+        run: |
+          FILE=$(ls "$GITHUB_WORKSPACE"/*.dynkit 2>/dev/null | head -1)
+          if [ -z "$FILE" ]; then
+            echo "::error::No .dynkit produced by scripts/export-dynkit.st"
+            exit 1
+          fi
+          echo "path=$FILE" >> "$GITHUB_OUTPUT"
+          echo "Found: $FILE"
+
+      - name: Detect VERSION change
+        if: github.event_name == 'push'
+        id: version_check
+        run: |
+          if git show HEAD^:VERSION > /tmp/prev_version 2>/dev/null; then
+            if diff -q /tmp/prev_version VERSION > /dev/null 2>&1; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+
+      # build-N prereleases are disposable CI output. A job re-run reuses the same
+      # run_number, so replace any existing build-N instead of failing on it.
+      - name: Publish build prerelease
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" \
+            --title "${{ github.event.repository.name }} build ${{ github.run_number }}" \
+            --notes "Build ${{ github.run_number }} from commit ${{ github.sha }} (on dynaspace-os ${{ steps.resolve.outputs.tag }})" \
+            --prerelease \
+            "${{ steps.dynkit.outputs.path }}"
+
+      # v<VERSION> is a real release, not disposable: no delete/replace here. If
+      # the tag already exists gh release create fails, which is intended - a
+      # published version is never overwritten.
+      - name: Publish versioned release
+        if: github.event_name == 'push' && steps.version_check.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version_check.outputs.version }}"
+          gh release create "v${VERSION}" \
+            --title "${{ github.event.repository.name }} v${VERSION}" \
+            --notes "Version ${VERSION} - build ${{ github.run_number }}, commit ${{ github.sha }} (on dynaspace-os ${{ steps.resolve.outputs.tag }})" \
+            "${{ steps.dynkit.outputs.path }}"
