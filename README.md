@@ -106,7 +106,7 @@ jobs:
 4. Download + unzip the pinned GToolkit VM from `feenkcom/gtoolkit` (public, cached by version).
 5. If `needs-opencv`: install OpenCV 4.13 + `libopencv_viz` stub, export `LD_LIBRARY_PATH`.
 6. If `needs-mongo`: `docker compose up` MongoDB from the image's `docker/`.
-7. Install Xvfb; verify the `dynaspace-os` image boots.
+7. Install Xvfb + `libxkbcommon-x11-0` (required by any `--interactive` GT run, not just camera kits — `winit` sets up XKB keyboard-state tracking when it opens the window); verify the `dynaspace-os` image boots.
 8. `xvfb-run smalltalkci --headful --image <dynaspace-os image> --vm <pinned cli>` — `--image`/`--vm` make SmalltalkCI skip its own image download and use the `dynaspace-os` image. `#loading` loads only the kit's own package(s); `#preTesting` tangles Lepiter; `#testing` runs the examples; `#postTesting` builds and round-trips the `.dynkit`.
 9. If `needs-mongo`: `docker compose down -v` (always).
 10. On `push` to `main`: publish `build-<run_number>` (prerelease) with the `.dynkit` attached (a job re-run replaces the existing `build-N`).

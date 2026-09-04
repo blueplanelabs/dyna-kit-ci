@@ -201,8 +201,14 @@ jobs:
           test -f "$COMPOSE" || { echo "::error::$COMPOSE not found in the dynaspace-os release zip"; exit 1; }
           docker compose -f "$COMPOSE" up -d --wait
 
+      # libxkbcommon-x11 is required by any --interactive GT run under Xvfb
+      # (winit sets up XKB keyboard-state tracking when it opens the window,
+      # even if nothing is ever typed) - not just for needs-opencv kits.
+      # dynaspace-os's own CI gets it only as a side effect of always
+      # installing OpenCV (its conda/Qt6 deps happen to pull it in); we
+      # install it explicitly instead of relying on that.
       - name: Install Xvfb
-        run: sudo apt-get install -y xvfb
+        run: sudo apt-get install -y xvfb libxkbcommon-x11-0
 
       # The dynaspace-os image is saved by saveAndQuitImage during that project's
       # build and can occasionally produce a snapshot that never reopens without
