@@ -33,7 +33,7 @@ jobs:
 
 | File / method | Purpose |
 |---|---|
-| `.smalltalk.ston` | `#baseline`, `#testing`, `#preTesting : 'scripts/tangle-lepiter.st'`, `#postTesting : 'scripts/export-dynkit.st'`, `#loading` with `#registerInIceberg: true` loading **only the kit package** |
+| `.smalltalk.ston` | `#baseline`, `#testing`, `#preTesting : 'scripts/tangle-lepiter.st'`, `#postTesting : 'scripts/export-dynkit.st'`, `#loading` with `#registerInIceberg: true` loading **only the kit's own package(s)** — not `DynaSpaceOS` / `LepiterLiterate`, which the `dynaspace-os` image already provides |
 | `VERSION` | e.g. `0.1.0` — drives the `vX.Y.Z` release tag and the `.dynkit` filename |
 | `BaselineOf<X> class >> kit` | returns a fully built `DynOSKit` (metadata + live objects) |
 | `BaselineOf<X> class >> loadLepiter` | registers `<repo>/lepiter` with the default logical database |
@@ -45,18 +45,22 @@ to the kit repo — this workflow copies them in from `scripts/` here before
 The kit baseline does **not** declare `DynaSpaceOS` or `LepiterLiterate` — the
 `dynaspace-os` release image already carries both.
 
-## Secrets (via `secrets: inherit`)
+## Secrets
 
-| Secret | Needed for |
-|---|---|
-| `GITHUB_TOKEN` | automatic; release creation |
-| `DYNA_DEPS_TOKEN` | `Contents: Read` on `blueplanelabs/dynaspace-os`, to download its release image |
+| Secret | Source | Needed for |
+|---|---|---|
+| `GITHUB_TOKEN` | automatic — always present in every run | creating the kit's releases (`gh release`) |
+| `DYNA_DEPS_TOKEN` | repo (or org) secret, passed in via `secrets: inherit` | `Contents: Read` on `blueplanelabs/dynaspace-os`, to download its release image |
 
-`DYNA_DEPS_TOKEN` is a fine-grained PAT (repo secret on each kit for now; an org
-secret / GitHub App later). Pull requests **from a fork** do not receive it and
-cannot run this workflow — the `dynaspace-os` image is required even for
-PR-only validation. Kit repos are private within the org, so this does not
-apply in practice.
+`GITHUB_TOKEN` is minted by GitHub Actions for every run — nobody creates or
+stores it. Its write scope comes from the caller job's `permissions:` block
+(`contents: write`); `secrets: inherit` is not what provides it.
+
+`DYNA_DEPS_TOKEN` is a fine-grained PAT (a repo secret on each kit for now; an
+org secret / GitHub App later). Pull requests **from a fork** do not receive it
+and cannot run this workflow — the `dynaspace-os` image is required even for
+PR-only validation. Kit repos are private within the org, so this does not apply
+in practice.
 
 ## Inputs
 
@@ -103,7 +107,7 @@ jobs:
 5. If `needs-opencv`: install OpenCV 4.13 + `libopencv_viz` stub, export `LD_LIBRARY_PATH`.
 6. If `needs-mongo`: `docker compose up` MongoDB from the image's `docker/`.
 7. Install Xvfb; verify the `dynaspace-os` image boots.
-8. `xvfb-run smalltalkci --headful --image <dynaspace-os image> --vm <pinned cli>` — `--image`/`--vm` make SmalltalkCI skip its own image download and use the `dynaspace-os` image. `#loading` loads only the kit package; `#preTesting` tangles Lepiter; `#testing` runs the examples; `#postTesting` builds and round-trips the `.dynkit`.
+8. `xvfb-run smalltalkci --headful --image <dynaspace-os image> --vm <pinned cli>` — `--image`/`--vm` make SmalltalkCI skip its own image download and use the `dynaspace-os` image. `#loading` loads only the kit's own package(s); `#preTesting` tangles Lepiter; `#testing` runs the examples; `#postTesting` builds and round-trips the `.dynkit`.
 9. If `needs-mongo`: `docker compose down -v` (always).
 10. On `push` to `main`: publish `build-<run_number>` (prerelease) with the `.dynkit` attached (a job re-run replaces the existing `build-N`).
 11. On `push` that changes `VERSION`: also publish `v<VERSION>` (fails if that tag already exists — a published version is never overwritten).

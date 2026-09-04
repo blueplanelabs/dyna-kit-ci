@@ -29,7 +29,7 @@ name: Kit CI
 #   - .smalltalk.ston  with #baseline, #testing, and
 #     #preTesting  : 'scripts/tangle-lepiter.st'
 #     #postTesting : 'scripts/export-dynkit.st'
-#     #loading with #registerInIceberg: true, loading ONLY the kit package
+#     #loading with #registerInIceberg: true, loading ONLY the kit's own package(s)
 #   - VERSION                        (e.g. 0.1.0)
 #   - BaselineOf<X> class >> kit         returning a fully built DynOSKit
 #   - BaselineOf<X> class >> loadLepiter registering <repo>/lepiter
@@ -234,7 +234,7 @@ jobs:
       # --headful triggers the patched gtoolkit/run.sh to pass --interactive to
       # GlamorousToolkit-cli. --image/--vm make smalltalkci skip prepare_gt and
       # use the dynaspace-os image + pinned VM directly. #loading then loads only
-      # the kit package; #preTesting tangles Lepiter; #postTesting builds and
+      # the kit's own package(s); #preTesting tangles Lepiter; #postTesting builds and
       # round-trips the .dynkit. No continue-on-error: a failing example or a
       # failing export fails the job and blocks the release.
       # LD_LIBRARY_PATH is inherited from $GITHUB_ENV only if the OpenCV step ran.
