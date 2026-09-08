@@ -66,11 +66,25 @@ in practice.
 
 | Input | Default | |
 |---|---|---|
+| `runner` | `ubuntu-24.04-arm` | Runner label. See **Why ARM** below — set to `ubuntu-latest` once GitHub's x86 hosted runners recover |
 | `smalltalk-image` | `GToolkit64-release` | SmalltalkCI image alias (job name / `-s` flag only) |
 | `dynaspace-os-release` | `latest` | `dynaspace-os` release tag to build on, or `latest` (newest `build-N`) |
 | `gt-vm-version` | `v1.1.554` | GToolkit VM version; must match the VM that saved the `dynaspace-os` release image |
 | `needs-opencv` | `false` | Install OpenCV 4.13 for kits whose examples call the camera-detection FFI (`LibOpenCV` / `DynIOArucoInputDetector` / `DynIOBlobInputDetector`) |
 | `needs-mongo` | `false` | Start MongoDB (docker compose, from the `dynaspace-os` image) for kits whose examples use Voyage/Mongo stores |
+
+### Why ARM
+
+Since **2026-09-07**, GToolkit's `saveAndQuitImage` segfaults (SIGSEGV, core
+dumped) under Xvfb on every GitHub **x86** hosted runner — `ubuntu-latest` and
+`ubuntu-22.04` alike. The whole software stack is byte-identical to a run that
+was green 90 minutes earlier; it's an environment regression below the
+runner-image layer, not a DynaSpace bug. `ubuntu-24.04-arm` runs the identical
+stack green end-to-end, so it's the default until the x86 fleet recovers — then
+flip `runner` back to `ubuntu-latest` here and re-tag `v1`.
+
+Kits inherit this transparently; a kit's `ci.yml` needs no change. The one
+exception is `needs-opencv` (see below).
 
 ### Kits that need extra services
 
@@ -97,13 +111,17 @@ jobs:
   `dynaspace-os` release image; `DynOSConfig` resolves `DYNASPACE_ENV` (unset →
   `dev`), which matches the credentials the compose file uses. The container is
   torn down (`down -v`) after the run.
+- **OpenCV needs an x86 runner.** The `.so` wrappers in the `dynaspace-os` image
+  are x86-only, so a `needs-opencv` kit must also set `runner: ubuntu-latest`.
+  Until the x86 SIGSEGV regression (see **Why ARM**) is resolved, such a kit
+  cannot pass CI — no camera kit exists yet.
 
 ## Pipeline
 
 1. Checkout kit + this repo (pinned to the workflow version); stage shared `.st` scripts.
 2. `setup-smalltalkCI`; patch `gtoolkit/run.sh` (`scripts/patch-smalltalkci.py`, Fixes 1/2/3 for `--headful` in CI).
 3. Resolve the `dynaspace-os` release tag; download + unzip its image (fresh each run — `latest` moves too often to cache usefully).
-4. Download + unzip the pinned GToolkit VM from `feenkcom/gtoolkit` (public, cached by version).
+4. Download + unzip the pinned GToolkit VM from `feenkcom/gtoolkit` (public, arch-aware URL, cached by version + arch).
 5. If `needs-opencv`: install OpenCV 4.13 + `libopencv_viz` stub, export `LD_LIBRARY_PATH`.
 6. If `needs-mongo`: `docker compose up` MongoDB from the image's `docker/`.
 7. Install Xvfb + `libxkbcommon-x11-0` (required by any `--interactive` GT run, not just camera kits — `winit` sets up XKB keyboard-state tracking when it opens the window); verify the `dynaspace-os` image boots.

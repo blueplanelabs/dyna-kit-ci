@@ -25,6 +25,11 @@ name: Kit CI
 # the kit's own package, tangle its Lepiter pages, run its <gtExample>s, build a
 # .dynkit and publish it as a GitHub release.
 #
+# Runs on ubuntu-24.04-arm by default: GToolkit's saveAndQuitImage SIGSEGVs under
+# Xvfb on GitHub's x86 hosted runners since 2026-09-07 (an environment
+# regression, not ours - see the README). Set the `runner` input to
+# ubuntu-latest once x86 recovers.
+#
 # The kit repo must provide:
 #   - .smalltalk.ston  with #baseline, #testing, and
 #     #preTesting  : 'scripts/tangle-lepiter.st'
@@ -60,6 +65,15 @@ on:
         required: false
         type: string
         default: v1.1.554
+      runner:
+        description: >-
+          Runner label. Default ubuntu-24.04-arm - WORKAROUND for a SIGSEGV in
+          GToolkit saveAndQuitImage on GitHub's x86 hosted runners (2026-09-07,
+          environment regression). Set to ubuntu-latest once x86 recovers.
+          needs-opencv kits must use ubuntu-latest (x86-only .so wrappers).
+        required: false
+        type: string
+        default: ubuntu-24.04-arm
       needs-opencv:
         description: Install OpenCV native libs for kits whose examples use ArUco / blob camera detection.
         required: false
@@ -73,10 +87,28 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Default ubuntu-24.04-arm - see the `runner` input. GToolkit's
+    # saveAndQuitImage SIGSEGVs under Xvfb on GitHub's x86 hosted runners since
+    # 2026-09-07; ARM64 is unaffected. Not our bug; revert to ubuntu-latest once
+    # the x86 fleet recovers.
+    runs-on: ${{ inputs.runner }}
     name: ${{ inputs.smalltalk-image }}
 
     steps:
+      # Kept deliberately: a runner-environment regression like the 2026-09-07
+      # x86 SIGSEGV is invisible in the logs otherwise, and there is no way to
+      # capture a baseline after the fact. Cheap (<1s, no sudo).
+      - name: Runner fingerprint
+        run: |
+          uname -sr
+          grep -m1 'model name' /proc/cpuinfo || true
+          for f in vmSize location; do
+            printf '%s: ' "$f"
+            curl -s -H Metadata:true --max-time 5 \
+              "http://169.254.169.254/metadata/instance/compute/$f?api-version=2021-02-01&format=text" || true
+            echo
+          done
+
       - name: Checkout kit repository
         uses: actions/checkout@v4
         with:
@@ -147,13 +179,14 @@ jobs:
           test -f "$DSOS/GlamorousToolkit.changes" || { echo "::error::no GlamorousToolkit.changes alongside the image"; exit 1; }
           ls -la "$DSOS"
 
-      # Cached: the key is the pinned VM version, which changes rarely and only on
-      # purpose, so after the first run this is a hit and skips the ~200 MB download.
+      # Cached by version AND arch: the key changes rarely and only on purpose,
+      # so after the first run per arch this is a hit and skips the ~200 MB
+      # download. runner.arch is X64 / ARM64.
       - name: Cache GToolkit VM
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/gt-vm
-          key: gt-vm-${{ inputs.gt-vm-version }}
+          key: gt-vm-${{ inputs.gt-vm-version }}-${{ runner.arch }}
 
       - name: Download GToolkit VM
         run: |
@@ -164,7 +197,9 @@ jobs:
           else
             mkdir -p "$GTVM"
             V="${{ inputs.gt-vm-version }}"
-            URL="https://github.com/feenkcom/gtoolkit/releases/download/${V}/GlamorousToolkit-Linux-x86_64-${V}.zip"
+            ARCH=$(uname -m)   # x86_64 | aarch64 - feenkcom/gtoolkit ships both
+            URL="https://github.com/feenkcom/gtoolkit/releases/download/${V}/GlamorousToolkit-Linux-${ARCH}-${V}.zip"
+            echo "Downloading $URL"
             curl -sfL "$URL" -o "$GTVM/vm.zip"
             unzip -q "$GTVM/vm.zip" -d "$GTVM"
             rm -f "$GTVM/vm.zip"
@@ -179,6 +214,8 @@ jobs:
       # the dynaspace-os release zip and are found via FileLocator image parent;
       # only OpenCV itself + a viz stub are added here. conda is preinstalled on
       # ubuntu-latest. No BLOB_DETECTOR_TOKEN needed.
+      # NOTE: those .so wrappers are x86-only, so a needs-opencv kit must also set
+      # `runner: ubuntu-latest` - it cannot run on the ARM64 default.
       - name: Setup OpenCV native dependencies
         if: ${{ inputs.needs-opencv }}
         run: |
