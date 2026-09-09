@@ -72,6 +72,7 @@ in practice.
 | `gt-vm-version` | `v1.1.554` | GToolkit VM version; must match the VM that saved the `dynaspace-os` release image |
 | `needs-opencv` | `false` | Install OpenCV 4.13 for kits whose examples call the camera-detection FFI (`LibOpenCV` / `DynIOArucoInputDetector` / `DynIOBlobInputDetector`) |
 | `needs-mongo` | `false` | Start MongoDB (docker compose, from the `dynaspace-os` image) for kits whose examples use Voyage/Mongo stores |
+| `kit-ci-ref` | `v1` | Ref of this repo to pull the shared `scripts/` from. Real kits never set it. Set it **only** when testing `dyna-kit-ci` from a branch, and make it match the `@ref` on your `uses:` line — GitHub exposes nothing usable about a reusable workflow's own ref (`github.job_workflow_sha` and every `GITHUB_JOB_WORKFLOW_*` var resolve empty here), so this can't be automatic |
 
 ### Why ARM
 

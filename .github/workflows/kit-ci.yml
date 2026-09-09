@@ -84,6 +84,18 @@ on:
         required: false
         type: boolean
         default: false
+      kit-ci-ref:
+        description: >-
+          Ref of blueplanelabs/dyna-kit-ci to pull the shared scripts
+          (scripts/*.st, patch-smalltalkci.py) from. MUST match the @ref on this
+          workflow's `uses:` line. Real kits leave it at the default (v1); set it
+          only when testing dyna-kit-ci itself from a branch. GitHub's
+          github.job_workflow_sha would make this automatic, but it and every
+          related env var resolve empty for this cross-repo workflow_call
+          (verified 2026-09-09).
+        required: false
+        type: string
+        default: v1
 
 jobs:
   build:
@@ -114,39 +126,32 @@ jobs:
         with:
           fetch-depth: 0
 
-      # github.job_workflow_sha is the documented way to pin this self-checkout to
-      # the exact commit of the reusable workflow that is running - but it
-      # resolves EMPTY here, so `actions/checkout` was silently falling back to
-      # the default branch (every run, whatever the caller pinned with @v1 /
-      # @<sha> / @<branch>). Derive the ref from GITHUB_JOB_WORKFLOW_REF instead
-      # (owner/repo/path@<ref>, where <ref> is refs/heads/... , refs/tags/... or
-      # a SHA). Prefer a SHA when we can get one; fail hard rather than check out
-      # the wrong code.
+      # Pin this self-checkout to the dyna-kit-ci commit that matches the running
+      # workflow. github.job_workflow_sha / _ref and the GITHUB_JOB_WORKFLOW_*
+      # env vars are the documented way, but ALL of them resolve empty for this
+      # cross-repo workflow_call (verified 2026-09-09), so a bare
+      # actions/checkout was silently getting dyna-kit-ci's default branch on
+      # every run. Use them if they ever start working; otherwise fall back to
+      # the caller-supplied kit-ci-ref (default v1).
       - name: Resolve dyna-kit-ci ref
         id: selfref
         env:
           CTX_SHA: ${{ github.job_workflow_sha }}
           CTX_REF: ${{ github.job_workflow_ref }}
+          INPUT_REF: ${{ inputs.kit-ci-ref }}
         run: |
-          echo "context github.job_workflow_sha = '${CTX_SHA}'"
-          echo "context github.job_workflow_ref = '${CTX_REF}'"
-          echo "env GITHUB_JOB_WORKFLOW_SHA       = '${GITHUB_JOB_WORKFLOW_SHA:-}'"
-          echo "env GITHUB_JOB_WORKFLOW_REF       = '${GITHUB_JOB_WORKFLOW_REF:-}'"
-          ref=""
-          if [ -n "${CTX_SHA}" ]; then
-            ref="${CTX_SHA}"
-          elif [ -n "${GITHUB_JOB_WORKFLOW_SHA:-}" ]; then
-            ref="${GITHUB_JOB_WORKFLOW_SHA}"
-          elif [ -n "${GITHUB_JOB_WORKFLOW_REF:-}" ] && [ "${GITHUB_JOB_WORKFLOW_REF}" != "${GITHUB_JOB_WORKFLOW_REF##*@}" ]; then
-            ref="${GITHUB_JOB_WORKFLOW_REF##*@}"
-          elif [ -n "${CTX_REF}" ] && [ "${CTX_REF}" != "${CTX_REF##*@}" ]; then
-            ref="${CTX_REF##*@}"
+          echo "github.job_workflow_sha='${CTX_SHA}' github.job_workflow_ref='${CTX_REF}'"
+          echo "GITHUB_JOB_WORKFLOW_SHA='${GITHUB_JOB_WORKFLOW_SHA:-}' GITHUB_JOB_WORKFLOW_REF='${GITHUB_JOB_WORKFLOW_REF:-}'"
+          if   [ -n "${CTX_SHA}" ]; then ref="${CTX_SHA}"; src="github.job_workflow_sha"
+          elif [ -n "${GITHUB_JOB_WORKFLOW_SHA:-}" ]; then ref="${GITHUB_JOB_WORKFLOW_SHA}"; src="env GITHUB_JOB_WORKFLOW_SHA"
+          elif [ -n "${GITHUB_JOB_WORKFLOW_REF:-}" ] && [ "${GITHUB_JOB_WORKFLOW_REF}" != "${GITHUB_JOB_WORKFLOW_REF##*@}" ]; then ref="${GITHUB_JOB_WORKFLOW_REF##*@}"; src="env GITHUB_JOB_WORKFLOW_REF"
+          elif [ -n "${CTX_REF}" ] && [ "${CTX_REF}" != "${CTX_REF##*@}" ]; then ref="${CTX_REF##*@}"; src="github.job_workflow_ref"
+          else ref="${INPUT_REF}"; src="inputs.kit-ci-ref"
           fi
           if [ -z "${ref}" ]; then
-            echo "::error::Cannot determine the dyna-kit-ci ref to check out - github.job_workflow_sha/ref and GITHUB_JOB_WORKFLOW_SHA/REF are all empty. Refusing to fall back to the default branch."
-            exit 1
+            echo "::error::No dyna-kit-ci ref available (inputs.kit-ci-ref is empty too)"; exit 1
           fi
-          echo "Resolved dyna-kit-ci ref: ${ref}"
+          echo "Using dyna-kit-ci ref '${ref}' (from ${src})"
           echo "ref=${ref}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout dyna-kit-ci (matching workflow version)
