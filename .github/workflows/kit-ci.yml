@@ -25,11 +25,6 @@ name: Kit CI
 # the kit's own package, tangle its Lepiter pages, run its <gtExample>s, build a
 # .dynkit and publish it as a GitHub release.
 #
-# Runs on ubuntu-24.04-arm by default: GToolkit's saveAndQuitImage SIGSEGVs under
-# Xvfb on GitHub's x86 hosted runners since 2026-09-07 (an environment
-# regression, not ours - see the README). Set the `runner` input to
-# ubuntu-latest once x86 recovers.
-#
 # The kit repo must provide:
 #   - .smalltalk.ston  with #baseline, #testing, and
 #     #preTesting  : 'scripts/tangle-lepiter.st'
@@ -56,24 +51,29 @@ on:
         type: string
         default: GToolkit64-release
       dynaspace-os-release:
-        description: dynaspace-os release tag to build on, or "latest".
+        description: >-
+          dynaspace-os release tag to build on, or "latest". Matched pair with
+          gt-vm-version (see there); bump both together when a newer dynaspace-os
+          main build has been validated.
         required: false
         type: string
-        default: latest
+        default: build-278
       gt-vm-version:
-        description: GToolkit VM version to run the image with. Must match the VM that saved the dynaspace-os release image.
+        description: >-
+          GToolkit VM version to run the image with. Must match the VM that
+          saved the dynaspace-os release image - dynaspace-os builds with
+          feenkcom's `latest`, so this is a matched pair with dynaspace-os-release
+          and the two must be bumped together.
         required: false
         type: string
-        default: v1.1.554
+        default: v1.1.583
       runner:
         description: >-
-          Runner label. Default ubuntu-24.04-arm - WORKAROUND for a SIGSEGV in
-          GToolkit saveAndQuitImage on GitHub's x86 hosted runners (2026-09-07,
-          environment regression). Set to ubuntu-latest once x86 recovers.
-          needs-opencv kits must use ubuntu-latest (x86-only .so wrappers).
+          Runner label. needs-opencv kits must keep this at ubuntu-latest - the
+          .so wrappers in the dynaspace-os image are x86-only.
         required: false
         type: string
-        default: ubuntu-24.04-arm
+        default: ubuntu-latest
       needs-opencv:
         description: Install OpenCV native libs for kits whose examples use ArUco / blob camera detection.
         required: false
@@ -99,17 +99,14 @@ on:
 
 jobs:
   build:
-    # Default ubuntu-24.04-arm - see the `runner` input. GToolkit's
-    # saveAndQuitImage SIGSEGVs under Xvfb on GitHub's x86 hosted runners since
-    # 2026-09-07; ARM64 is unaffected. Not our bug; revert to ubuntu-latest once
-    # the x86 fleet recovers.
     runs-on: ${{ inputs.runner }}
     name: ${{ inputs.smalltalk-image }}
 
     steps:
-      # Kept deliberately: a runner-environment regression like the 2026-09-07
-      # x86 SIGSEGV is invisible in the logs otherwise, and there is no way to
-      # capture a baseline after the fact. Cheap (<1s, no sudo).
+      # Kept deliberately: GToolkit under Xvfb has a history of failing on
+      # runner-environment changes (kernel, CPU, hypervisor) that leave no other
+      # trace in the logs, and there is no way to capture a baseline after the
+      # fact. Cheap (<1s, no sudo).
       - name: Runner fingerprint
         run: |
           uname -sr
@@ -172,10 +169,13 @@ jobs:
         with:
           smalltalk-image: ${{ inputs.smalltalk-image }}
 
-      # Fixes 1/2/3 in gtoolkit/run.sh so GToolkit --headful works headless in CI.
-      # (The VM-version pin is NOT applied here in Option B: prepare_gt/prepare_vm
-      # are skipped when --image/--vm are user-provided, so we pin by choosing
-      # which VM zip we download below.)
+      # Fixes 1/2/3/5 in gtoolkit/run.sh so GToolkit --headful works in CI: LOAD
+      # phase headless, TEST phase --interactive + a shell watchdog that puts the
+      # VM down once smalltalkCI has written its verdict (the new-Winit VM will
+      # not exit on its own under Xvfb). Mirrors dynaspace-os's own patch
+      # (PR #22). No VM-version pin here: prepare_gt/prepare_vm are skipped when
+      # --image/--vm are user-provided, so we pin by choosing which VM zip we
+      # download below.
       - name: Patch SmalltalkCI gtoolkit/run.sh
         run: python3 .dyna-kit-ci/scripts/patch-smalltalkci.py "$SMALLTALK_CI_HOME/gtoolkit/run.sh"
 
@@ -201,10 +201,11 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Using dynaspace-os release: $TAG"
 
-      # Not cached: the default `latest` resolves to a new tag on almost every
-      # run (dynaspace-os publishes a build per push), so an image cache would be
-      # a near-permanent miss plus ~2 min of post-job save overhead. Downloading
-      # the release zip fresh is ~1 min. The VM below IS cached (stable key).
+      # Not cached: with `latest` the tag changes on almost every run
+      # (dynaspace-os publishes a build per push), so an image cache would be a
+      # near-permanent miss plus ~2 min of post-job save overhead; and even with
+      # a pinned build the ~150 MB image is not worth a cache round-trip.
+      # Downloading the release zip fresh is ~1 min. The VM below IS cached.
       - name: Download dynaspace-os image
         env:
           GH_TOKEN: ${{ secrets.DYNA_DEPS_TOKEN }}
@@ -284,14 +285,27 @@ jobs:
       # dynaspace-os's own CI gets it only as a side effect of always
       # installing OpenCV (its conda/Qt6 deps happen to pull it in); we
       # install it explicitly instead of relying on that.
+      # libegl1 / libegl-mesa0: libEGL.so.1 is a hard dependency of the VM's
+      # bundled libSkia.so; without it every skia_* dlsym returns null. Kept
+      # until a run proves the v1.1.583 bundle no longer needs it - the ldd
+      # check below reports it.
       - name: Install Xvfb
-        run: sudo apt-get install -y xvfb libxkbcommon-x11-0
+        run: |
+          sudo apt-get install -y xvfb libxkbcommon-x11-0 libegl1 libegl-mesa0
+          ldd "${{ runner.temp }}/gt-vm/lib/libSkia.so" 2>&1 | grep -E "not found" \
+            && echo "::warning::libSkia.so has unmet shared-library dependencies" \
+            || echo "libSkia.so dependencies resolved"
 
       # The dynaspace-os image is saved by saveAndQuitImage during that project's
       # build and can occasionally produce a snapshot that never reopens without
       # raising a Smalltalk-level error. Boot it here under the same
       # --interactive/Xvfb conditions and fail hard if a trivial eval does not
       # complete, before we hand it to smalltalkci.
+      # dynaspace-os render-checks the image before publishing (PR #22), so this
+      # is now mainly a boot + VM/image-pairing check (right VM version, intact
+      # .changes, clean download) - fail fast at ~1 min instead of a confusing
+      # smalltalkci failure later. Revisit removing it once the pipeline is
+      # stable.
       - name: Verify dynaspace-os image boots
         timeout-minutes: 10
         run: |
@@ -323,7 +337,7 @@ jobs:
       # LD_LIBRARY_PATH is inherited from $GITHUB_ENV only if the OpenCV step ran.
       - name: Load kit and run examples
         run: |
-          xvfb-run -a smalltalkci -v -s "${{ inputs.smalltalk-image }}" --headful \
+          stdbuf -oL -eL xvfb-run -a smalltalkci -v -s "${{ inputs.smalltalk-image }}" --headful \
             --image "${{ runner.temp }}/dynaspace-os/GlamorousToolkit.image" \
             --vm    "${{ runner.temp }}/gt-vm/bin/GlamorousToolkit-cli"
         timeout-minutes: 25
