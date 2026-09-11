@@ -6,6 +6,10 @@
  evaluate-lepiter-snippets.st, minus the from-scratch LepiterLiterate load
  (already in the dynaspace-os release image) and the coverage-persist step.
 
+ Also ensures pharo-local/lepiter exists next to the image before calling
+ loadLepiter, so LeLogicalDatabaseProperties>>save does not fail if a future
+ dynaspace-os release stops shipping that directory (see the guard below).
+
  Fully guarded: a kit whose baseline has no #loadLepiter, whose lepiter/ is not
  registered, or whose database has no table of contents is a clean no-op - the
  case for a kit that still ships committed .class.st code and an empty lepiter/."
@@ -42,6 +46,15 @@ Transcript crShow: 'tangle-lepiter: starting'; cr.
       Transcript crShow: 'tangle-lepiter: BaselineOf', baselineName,
           ' has no loadLepiter - nothing to tangle'; cr.
       ^ nil ].
+
+  "The dynaspace-os release image may not ship pharo-local/lepiter next to the
+   image (it stopped around GT v1.1.582). loadLepiter registers the kit's
+   lepiter/ directory, which persists LeLogicalDatabaseProperties, and its save
+   fails on openForWrite when that parent directory is missing. Ensure it
+   exists first - idempotent, and a no-op when the image already ships it."
+  (FileLocator imageDirectory / 'pharo-local' / 'lepiter') ensureCreateDirectory.
+  Transcript crShow: 'tangle-lepiter: ensured pharo-local/lepiter'; cr.
+
   baselineClass loadLepiter.
 
   "3. Locate the kit's lepiter/ directory via the repo that owns the baseline package."
