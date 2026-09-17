@@ -41,6 +41,11 @@ name: Kit CI
 #   - GITHUB_TOKEN     automatic; release creation
 #   - DYNA_DEPS_TOKEN  read access to blueplanelabs/dynaspace-os (Contents: Read)
 #                      to download its release image
+#   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+#                      dyna-kit-publisher IAM credentials (s3:PutObject on
+#                      s3://dynaspace-deploy/kits/* only); publishes the
+#                      .dynkit there when VERSION changes, see dynaspace-os's
+#                      aws/README-aws.md
 
 on:
   workflow_call:
@@ -404,3 +409,41 @@ jobs:
             --title "${{ github.event.repository.name }} v${VERSION}" \
             --notes "Version ${VERSION} - build ${{ github.run_number }}, commit ${{ github.sha }} (on dynaspace-os ${{ steps.resolve.outputs.tag }})" \
             "${{ steps.dynkit.outputs.path }}"
+
+      # Mirrors the versioned release into S3 so DynOSKitRepository can install
+      # it in production over http:// (installKit:/localFileFor: only
+      # understand file:// and http://, not GitHub releases). Gated exactly
+      # like "Publish versioned release" above, on purpose: the S3 layout is
+      # keyed by version (Maven-style), so publishing on every disposable
+      # build-N push would silently overwrite the same key until VERSION
+      # changes - the same "never overwrite a published version" rule as the
+      # GitHub release applies here, just enforced by only ever writing once
+      # per version rather than by a failing API call.
+      # org/name/version are read from the .dynkit itself (STON) and its
+      # filename rather than re-deriving them in Smalltalk - DynOSKit has no
+      # publishKit: yet (see blueplanelabs/dynaspace-os), so this step does
+      # the S3 upload directly with the AWS CLI.
+      - name: Publish to S3
+        if: github.event_name == 'push' && steps.version_check.outputs.changed == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: eu-west-1
+        run: |
+          FILE="${{ steps.dynkit.outputs.path }}"
+          VERSION="${{ steps.version_check.outputs.version }}"
+          BASENAME=$(basename "$FILE")
+          NAME="${BASENAME%-$VERSION.dynkit}"
+          if [ "$NAME" = "$BASENAME" ]; then
+            echo "::error::Could not derive the kit name from '$BASENAME' (expected <name>-${VERSION}.dynkit)"
+            exit 1
+          fi
+          ORG=$(grep -oP "#organization\s*:\s*'\K[^']+" "$FILE")
+          if [ -z "$ORG" ]; then
+            echo "::error::Could not read #organization from $FILE"
+            exit 1
+          fi
+          ORG_PATH="${ORG//./\/}"
+          S3_KEY="kits/${ORG_PATH}/${NAME}/${VERSION}/${BASENAME}"
+          aws s3 cp "$FILE" "s3://dynaspace-deploy/${S3_KEY}"
+          echo "Published to s3://dynaspace-deploy/${S3_KEY}"

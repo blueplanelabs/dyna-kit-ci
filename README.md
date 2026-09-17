@@ -51,6 +51,7 @@ The kit baseline does **not** declare `DynaSpaceOS` or `LepiterLiterate` — the
 |---|---|---|
 | `GITHUB_TOKEN` | automatic — always present in every run | creating the kit's releases (`gh release`) |
 | `DYNA_DEPS_TOKEN` | repo (or org) secret, passed in via `secrets: inherit` | `Contents: Read` on `blueplanelabs/dynaspace-os`, to download its release image |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | repo (or org) secret, passed in via `secrets: inherit` | `dyna-kit-publisher` IAM credentials, scoped to `s3:PutObject` on `s3://dynaspace-deploy/kits/*` — publishes the `.dynkit` there when `VERSION` changes |
 
 `GITHUB_TOKEN` is minted by GitHub Actions for every run — nobody creates or
 stores it. Its write scope comes from the caller job's `permissions:` block
@@ -61,6 +62,13 @@ org secret / GitHub App later). Pull requests **from a fork** do not receive it
 and cannot run this workflow — the `dynaspace-os` image is required even for
 PR-only validation. Kit repos are private within the org, so this does not apply
 in practice.
+
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` are the access key of the
+`dyna-kit-publisher` IAM user (created by `dynaspace-os`'s
+`aws/setup-infra.sh` — see that repo's `aws/README-aws.md` for the permission
+model). Only needed for the "Publish to S3" step, which only runs when
+`VERSION` changes — a pull request or a `build-N`-only push works fine
+without them.
 
 ## Inputs
 
@@ -126,5 +134,6 @@ jobs:
 9. If `needs-mongo`: `docker compose down -v` (always).
 10. On `push` to `main`: publish `build-<run_number>` (prerelease) with the `.dynkit` attached (a job re-run replaces the existing `build-N`).
 11. On `push` that changes `VERSION`: also publish `v<VERSION>` (fails if that tag already exists — a published version is never overwritten).
+12. On that same push (`VERSION` changed): publish the `.dynkit` to `s3://dynaspace-deploy/kits/<org>/<name>/<version>/` too, using the `dyna-kit-publisher` credentials, so `DynOSKitRepository` can install it in production over `http://`. Gated identically to step 11 — a `build-N`-only push never touches S3, since the S3 layout is keyed by version and overwriting an unreleased build's key on every push would defeat that.
 
-Pull requests run steps 1–9 only (no release).
+Pull requests run steps 1–9 only (no release, no S3 publish).
