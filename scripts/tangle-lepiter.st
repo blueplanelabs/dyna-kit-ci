@@ -90,3 +90,22 @@ Transcript crShow: 'tangle-lepiter: starting'; cr.
   do: [ :e |
       Transcript crShow: 'FATAL: tangle-lepiter raised ', e class name, ': ', e messageText; cr.
       Smalltalk exit: 1 ].
+
+!
+"6. Wait for the Lepiter reloads queued when the image opened.
+ LeLocalStoreMonitor>>startUp submits one reload per database to the #Lepiter future
+ group, and they keep running after the tangle (about 8 s on the dynaspace-os release
+ image). That group runs above DynOSClock's priority, so a DynaSpace started meanwhile
+ does not iterate and the first functional example fails. The group has a single
+ worker that runs its futures in order: a sentinel future queued now runs only once
+ those reloads are done. It is a chunk of its own (see the separator above) because FileReference>>fileIn
+ runs each chunk as one DoIt, so a ^ nil in the block above would skip it otherwise.
+ On timeout it only logs and lets the tests run."
+[ | promise start |
+  start := Time millisecondClockValue.
+  promise := [ true ] asAsyncFuture awaitInLepiterWorker.
+  [ promise isFulfilled not and: [ Time millisecondClockValue - start < 120000 ] ]
+      whileTrue: [ (Delay forMilliseconds: 250) wait ].
+  Transcript crShow: 'tangle-lepiter: Lepiter worker idle after ',
+      (Time millisecondClockValue - start) printString, ' ms',
+      (promise isFulfilled ifTrue: [ '' ] ifFalse: [ ' (TIMEOUT, continuing)' ]); cr ] value.
