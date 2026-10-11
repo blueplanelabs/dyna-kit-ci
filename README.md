@@ -80,6 +80,7 @@ without them.
 | `gt-vm-version` | `v1.1.583` | GToolkit VM version; must match the VM that saved the `dynaspace-os` release image. `dynaspace-os` builds with feenkcom's `latest`, so this moves with `dynaspace-os-release` |
 | `needs-opencv` | `false` | Install OpenCV 4.13 for kits whose examples call the camera-detection FFI (`LibOpenCV` / `DynIOArucoInputDetector` / `DynIOBlobInputDetector`) |
 | `needs-mongo` | `false` | Start MongoDB (docker compose, from the `dynaspace-os` image) for kits whose examples use Voyage/Mongo stores |
+| `apt-packages` | `''` | Space-separated apt packages to install on the runner before the examples run, for kits whose live objects need native libraries or build tools the `dynaspace-os` image does not carry (e.g. `libpulse-dev` for the sounds kit, which rebuilds RtAudio against PulseAudio). Empty installs nothing extra |
 | `kit-ci-ref` | `v1` | Ref of this repo to pull the shared `scripts/` from. Real kits never set it. Set it **only** when testing `dyna-kit-ci` from a branch, and make it match the `@ref` on your `uses:` line — GitHub exposes nothing usable about a reusable workflow's own ref (`github.job_workflow_sha` and every `GITHUB_JOB_WORKFLOW_*` var resolve empty here), so this can't be automatic |
 
 ### dynaspace-os platform version
@@ -92,10 +93,10 @@ combination (`build-278` / `v1.1.583`); when a newer `dynaspace-os` `main` build
 has been validated, bump **both** inputs together and re-tag `v1`. A kit can
 override the pair in its own `ci.yml` `with:` block, but must override both.
 
-### Kits that need extra services
+### Kits that need extra services or native packages
 
-Setting `needs-opencv` or `needs-mongo` in the caller `ci.yml` is the only case
-where a kit's `ci.yml` is not identical to every other:
+Setting `needs-opencv`, `needs-mongo` or `apt-packages` in the caller `ci.yml`
+is the only case where a kit's `ci.yml` is not identical to every other:
 
 ```yaml
 jobs:
@@ -104,8 +105,9 @@ jobs:
       contents: write
     uses: blueplanelabs/dyna-kit-ci/.github/workflows/kit-ci.yml@v1
     with:
-      needs-opencv: true   # kit examples use ArUco / blob detection
-      needs-mongo: true    # kit examples use Voyage/Mongo stores
+      needs-opencv: true          # kit examples use ArUco / blob detection
+      needs-mongo: true           # kit examples use Voyage/Mongo stores
+      apt-packages: libpulse-dev  # native libs / build tools the kit's live objects need
     secrets: inherit
 ```
 
@@ -117,6 +119,13 @@ jobs:
   `dynaspace-os` release image; `DynOSConfig` resolves `DYNASPACE_ENV` (unset →
   `dev`), which matches the credentials the compose file uses. The container is
   torn down (`down -v`) after the run.
+- **apt packages**: installed with `sudo apt-get install -y` right after the
+  Xvfb step, before the image boot check and the test run. Meant for kits whose
+  live objects set up native dependencies at runtime on the Dyna Host (the sounds
+  kit installs Phausto and rebuilds `librtaudio.so.6` against PulseAudio, so it
+  needs `libpulse-dev`; `g++` is already on the runner). List only what the
+  `dynaspace-os` image and the runner do not provide — this is not a substitute
+  for `needs-opencv` / `needs-mongo`, which do more than an apt install.
 - **OpenCV needs an x86 runner.** The `.so` wrappers in the `dynaspace-os` image
   are x86-only, so a `needs-opencv` kit must keep `runner` at its default
   `ubuntu-latest` rather than switching to an ARM runner.
@@ -129,7 +138,7 @@ jobs:
 4. Download + unzip the pinned GToolkit VM from `feenkcom/gtoolkit` (public, arch-aware URL, cached by version + arch).
 5. If `needs-opencv`: install OpenCV 4.13 + `libopencv_viz` stub, export `LD_LIBRARY_PATH`.
 6. If `needs-mongo`: `docker compose up` MongoDB from the image's `docker/`.
-7. Install Xvfb + `libxkbcommon-x11-0` (required by any `--interactive` GT run — `winit` sets up XKB keyboard-state tracking when it opens the window) + `libegl1` / `libegl-mesa0` (a hard dependency of the VM's bundled `libSkia.so`); verify the `dynaspace-os` image boots.
+7. Install Xvfb + `libxkbcommon-x11-0` (required by any `--interactive` GT run — `winit` sets up XKB keyboard-state tracking when it opens the window) + `libegl1` / `libegl-mesa0` (a hard dependency of the VM's bundled `libSkia.so`); if `apt-packages` is set, install those packages too; verify the `dynaspace-os` image boots.
 8. `xvfb-run smalltalkci --headful --image <dynaspace-os image> --vm <pinned cli>` — `--image`/`--vm` make SmalltalkCI skip its own image download and use the `dynaspace-os` image. `#loading` loads only the kit's own package(s); `#preTesting` tangles Lepiter; `#testing` runs the examples; `#postTesting` builds and round-trips the `.dynkit`.
 9. If `needs-mongo`: `docker compose down -v` (always).
 10. On `push` to `main`: publish `build-<run_number>` (prerelease) with the `.dynkit` attached (a job re-run replaces the existing `build-N`).
