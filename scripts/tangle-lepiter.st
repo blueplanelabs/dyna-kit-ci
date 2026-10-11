@@ -55,6 +55,17 @@ Transcript crShow: 'tangle-lepiter: starting'; cr.
   (FileLocator imageDirectory / 'pharo-local' / 'lepiter') ensureCreateDirectory.
   Transcript crShow: 'tangle-lepiter: ensured pharo-local/lepiter'; cr.
 
+  "That directory may also lack logical-database.properties itself. Then
+   LeLogicalDatabaseProperties>>load yields an EMPTY dictionary, loadLepiter's
+   addRegisteredDirectory: writes a file holding only registeredDatabaseUrls, and
+   the reload that follows dies with KeyNotFound: 'primaryDatabaseUrl'. Whether a
+   run hits it depends on a race with the startup reloads (they eventually call
+   saveProperties), so persist the current primary/playground/registered URLs
+   explicitly first. Idempotent: with a complete file it changes nothing (at most
+   it adds playgroundDatabaseUrl, which defaults to the primary one anyway)."
+  LeDatabasesRegistry default currentLoadedDefaultLogicalDatabase saveProperties.
+  Transcript crShow: 'tangle-lepiter: saved logical database properties'; cr.
+
   baselineClass loadLepiter.
 
   "3. Locate the kit's lepiter/ directory via the repo that owns the baseline package."
