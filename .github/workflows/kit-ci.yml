@@ -89,6 +89,16 @@ on:
         required: false
         type: boolean
         default: false
+      apt-packages:
+        description: >-
+          Space-separated apt packages to install on the runner before the
+          examples run, for kits whose live objects need native libraries or
+          build tools that the dynaspace-os image does not carry (e.g.
+          "libpulse-dev" for the sounds kit, which rebuilds RtAudio against
+          PulseAudio). Empty means nothing extra is installed.
+        required: false
+        type: string
+        default: ''
       kit-ci-ref:
         description: >-
           Ref of blueplanelabs/dyna-kit-ci to pull the shared scripts
@@ -300,6 +310,12 @@ jobs:
           ldd "${{ runner.temp }}/gt-vm/lib/libSkia.so" 2>&1 | grep -E "not found" \
             && echo "::warning::libSkia.so has unmet shared-library dependencies" \
             || echo "libSkia.so dependencies resolved"
+
+      # Kit-declared native dependencies (see the apt-packages input). Runs after
+      # the Xvfb step so a kit never has to repeat the packages every GT run needs.
+      - name: Install kit apt packages
+        if: ${{ inputs.apt-packages != '' }}
+        run: sudo apt-get install -y ${{ inputs.apt-packages }}
 
       # The dynaspace-os image is saved by saveAndQuitImage during that project's
       # build and can occasionally produce a snapshot that never reopens without
