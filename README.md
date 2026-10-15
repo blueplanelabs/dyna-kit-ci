@@ -35,7 +35,7 @@ jobs:
 |---|---|
 | `.smalltalk.ston` | `#baseline`, `#testing`, `#preTesting : 'scripts/tangle-lepiter.st'`, `#postTesting : 'scripts/export-dynkit.st'`, `#loading` with `#registerInIceberg: true` loading **only the kit's own package(s)** — not `DynaSpaceOS` / `LepiterLiterate`, which the `dynaspace-os` image already provides |
 | `VERSION` | e.g. `0.1.0` — drives the `vX.Y.Z` release tag and the `.dynkit` filename |
-| `BaselineOf<X> class >> kit` | returns a fully built `DynOSKit` (metadata + live objects) |
+| `BaselineOf<X> class >> kit` | returns a fully built `DynOSKit` (metadata + live objects), with a `kitId` (0–63) unique among the team's kits — the uids of its live objects are `kitId` × 16 + their position |
 | `BaselineOf<X> class >> loadLepiter` | registers `<repo>/lepiter` with the default logical database |
 
 `scripts/tangle-lepiter.st` and `scripts/export-dynkit.st` are **not** committed
@@ -44,6 +44,26 @@ to the kit repo — this workflow copies them in from `scripts/` here before
 
 The kit baseline does **not** declare `DynaSpaceOS` or `LepiterLiterate` — the
 `dynaspace-os` release image already carries both.
+
+### Naming
+
+Kits created from `dyna-kit-template` follow these names (`<X>` is the kit's
+short name in CamelCase, e.g. `Timeline`):
+
+| What | Name |
+|---|---|
+| Baseline class | `BaselineOfDyna<X>Kit` |
+| Baseline name (`.smalltalk.ston` → `#baseline`) | `Dyna<X>Kit` |
+| Kit package | `DynaSpaceKit-<X>` |
+| Examples class (its `<kitLiveObject: N>` methods are the kit's live objects) | `Dyn<X>Example` |
+| Test case (`.smalltalk.ston` → `#testing` → `#classes`) | `Dyn<X>ExampleTestCase` |
+| Kit name (`DynOSKit >> name`, the `.dynkit` filename) | kebab-case, e.g. `timeline-kit` |
+
+Examples and test cases go in the package tag `Examples`: everything else in
+the kit package reaches the hosts inside the `.dynkit`. The conventions for
+the methods that return live objects (selectors, pragmas, protocols) and the
+numbering of `<kitLiveObject: N>` are in the template's Lepiter page
+"Convenios del kit".
 
 ## Secrets
 
