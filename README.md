@@ -74,7 +74,7 @@ without them.
 
 | Input | Default | |
 |---|---|---|
-| `runner` | `ubuntu-latest` | Runner label. `needs-opencv` kits must keep it at `ubuntu-latest` (the `.so` wrappers in the `dynaspace-os` image are x86-only) |
+| `runner` | `ubuntu-24.04` | Runner label, pinned to the Ubuntu of the dyna hosts (since November 2026 `ubuntu-latest` is 26.04, without Miniconda). `needs-opencv` kits must keep it at `ubuntu-24.04` (the `.so` wrappers in the `dynaspace-os` image are x86-only and OpenCV comes from conda) |
 | `smalltalk-image` | `GToolkit64-release` | SmalltalkCI image alias (job name / `-s` flag only) |
 | `dynaspace-os-release` | `build-278` | `dynaspace-os` release tag to build on, or `latest`. **Matched pair with `gt-vm-version`** — bump both together when a newer `dynaspace-os` `main` build has been validated |
 | `gt-vm-version` | `v1.1.583` | GToolkit VM version; must match the VM that saved the `dynaspace-os` release image. `dynaspace-os` builds with feenkcom's `latest`, so this moves with `dynaspace-os-release` |
@@ -111,7 +111,7 @@ jobs:
 
 - **OpenCV**: the `libWrapperOpenCVDetector` / `libOpenCVDetector` `.so` wrappers
   already ride in the `dynaspace-os` release image, so no extra token is needed —
-  only OpenCV itself is installed (via conda, preinstalled on the runner) plus a
+  only OpenCV itself is installed (via conda, preinstalled on the ubuntu-24.04 runner) plus a
   `libopencv_viz` stub, and `LD_LIBRARY_PATH` is set for the test run.
 - **Mongo**: the `docker/docker-compose.yml` is tangle-generated and ships in the
   `dynaspace-os` release image; `DynOSConfig` resolves `DYNASPACE_ENV` (unset →
@@ -119,7 +119,7 @@ jobs:
   torn down (`down -v`) after the run.
 - **OpenCV needs an x86 runner.** The `.so` wrappers in the `dynaspace-os` image
   are x86-only, so a `needs-opencv` kit must keep `runner` at its default
-  `ubuntu-latest` rather than switching to an ARM runner.
+  `ubuntu-24.04` rather than switching to an ARM runner.
 
 ## Pipeline
 

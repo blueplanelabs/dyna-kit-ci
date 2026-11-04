@@ -74,11 +74,14 @@ on:
         default: v1.1.583
       runner:
         description: >-
-          Runner label. needs-opencv kits must keep this at ubuntu-latest - the
-          .so wrappers in the dynaspace-os image are x86-only.
+          Runner label. Pinned to ubuntu-24.04, the Ubuntu of the dyna hosts:
+          since November 2026 ubuntu-latest is 26.04, whose runner image ships
+          no Miniconda (actions/runner-images#14748). needs-opencv kits must keep
+          this at ubuntu-24.04 - the .so wrappers in the dynaspace-os image are
+          x86-only and OpenCV is installed with conda.
         required: false
         type: string
-        default: ubuntu-latest
+        default: ubuntu-24.04
       needs-opencv:
         description: Install OpenCV native libs for kits whose examples use ArUco / blob camera detection.
         required: false
@@ -269,9 +272,9 @@ jobs:
       # libWrapperOpenCVDetector / libOpenCVDetector .so wrappers already ride in
       # the dynaspace-os release zip and are found via FileLocator image parent;
       # only OpenCV itself + a viz stub are added here. conda is preinstalled on
-      # ubuntu-latest. No BLOB_DETECTOR_TOKEN needed.
-      # NOTE: those .so wrappers are x86-only, so a needs-opencv kit must also set
-      # `runner: ubuntu-latest` - it cannot run on the ARM64 default.
+      # ubuntu-24.04 (not on 26.04). No BLOB_DETECTOR_TOKEN needed.
+      # NOTE: those .so wrappers are x86-only, so a needs-opencv kit must keep
+      # `runner: ubuntu-24.04` - it cannot run on an ARM64 runner.
       - name: Setup OpenCV native dependencies
         if: ${{ inputs.needs-opencv }}
         run: |
