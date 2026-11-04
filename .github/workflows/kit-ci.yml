@@ -278,7 +278,10 @@ jobs:
       - name: Setup OpenCV native dependencies
         if: ${{ inputs.needs-opencv }}
         run: |
-          conda install -c conda-forge opencv=4.13.0 -y --quiet
+          # --override-channels: the wrapper .so was built and validated against the
+          # conda-forge build; without it the solver may pick the headless build of
+          # Anaconda's pkgs/main (it did on 2026-11-04), which has no Qt.
+          conda install -c conda-forge --override-channels opencv=4.13.0 -y --quiet
           CONDA_LIB="$(conda info --base)/lib"
           printf 'void __opencv_viz_stub(void) {}' > /tmp/stub_viz.c
           gcc -shared -fPIC -Wl,-soname,libopencv_viz.so.413 /tmp/stub_viz.c -o /tmp/libopencv_viz.so.413
