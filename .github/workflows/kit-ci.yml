@@ -371,6 +371,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # When the VM dies (segfault, abort) the Pharo VM writes crash.dmp with the
+      # native stack next to the running image, and Smalltalk-level errors go to
+      # PharoDebug.log. smalltalkci copies the image to its _builds directory, so
+      # look there first. They are the only trace of a crash in the runner.
+      - name: Upload crash dumps and debug logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-dumps
+          path: |
+            /home/runner/.smalltalkCI/_builds/crash.dmp
+            /home/runner/.smalltalkCI/_builds/PharoDebug.log
+            ${{ runner.temp }}/dynaspace-os/crash.dmp
+            ${{ runner.temp }}/dynaspace-os/PharoDebug.log
+          if-no-files-found: ignore
+
       - name: Stop MongoDB
         if: ${{ always() && inputs.needs-mongo }}
         run: |
