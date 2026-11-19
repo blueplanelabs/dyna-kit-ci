@@ -312,6 +312,11 @@ jobs:
       # check below reports it.
       - name: Install Xvfb
         run: |
+          # Refresh the package index first: the one baked into the runner image
+          # goes stale when Ubuntu replaces a package (on 2026-11-18 the mirror no
+          # longer had the libegl-mesa0 version it listed, and the install failed
+          # with 404). The kit apt packages step below reuses this fresh index.
+          sudo apt-get update
           sudo apt-get install -y xvfb libxkbcommon-x11-0 libegl1 libegl-mesa0
           ldd "${{ runner.temp }}/gt-vm/lib/libSkia.so" 2>&1 | grep -E "not found" \
             && echo "::warning::libSkia.so has unmet shared-library dependencies" \
